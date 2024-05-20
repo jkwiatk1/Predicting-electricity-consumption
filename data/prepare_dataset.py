@@ -1,11 +1,11 @@
 import pandas as pd
 
 
-def prepare_weather_data():
+def prepare_weather_data(path):
     # Load data from csv skipping first rows
-    warszawa_raw = pd.read_csv('Warszawa.csv', skiprows=10, header=None)
-    pila = pd.read_csv('Pila.csv', skiprows=10, header=None)
-    czestochowa = pd.read_csv('Czestochowa.csv', skiprows=10, header=None)
+    warszawa_raw = pd.read_csv(path + 'Warszawa.csv', skiprows=10, header=None)
+    pila = pd.read_csv(path + 'Pila.csv', skiprows=10, header=None)
+    czestochowa = pd.read_csv(path + 'Czestochowa.csv', skiprows=10, header=None)
 
     # Only data without time
     warszawa = warszawa_raw.iloc[:, 1:]
@@ -19,11 +19,11 @@ def prepare_weather_data():
     average_values = (warszawa + pila + czestochowa) / 3
 
     # Add time column
-    # average_values.insert(0, 'Time', warszawa_raw.iloc[:, 0])
-    average_values.insert(0, 'Time', range(1, len(average_values) + 1))
+    average_values.insert(0, 'Time', warszawa_raw.iloc[:, 0])
+    # average_values.insert(0, 'Time', range(1, len(average_values) + 1))
 
     # Load full data from csv
-    data = pd.read_csv("Warszawa.csv", delimiter=';', header=None)
+    data = pd.read_csv(path + "Warszawa.csv", delimiter=';', header=None)
 
     # Get names of parameters
     parameters_part1 = data.iloc[4].values[0].split(',')
@@ -35,14 +35,14 @@ def prepare_weather_data():
     print(parameters)
 
     # Write data Polska.csv
-    average_values.to_csv('Polska.csv', index=False, header=True)
+    average_values.to_csv(path + 'Polska.csv', index=False, header=True)
 
 
-def prepare_energy_data():
+def prepare_energy_data(path):
     # Load data from csv skipping first rows
-    data2021 = pd.read_csv('monthly_hourly_load_values_2021.csv', sep=';')
-    data2022 = pd.read_csv('monthly_hourly_load_values_2022.csv', sep=';')
-    data2023 = pd.read_csv('monthly_hourly_load_values_2023.csv', sep=',')
+    data2021 = pd.read_csv(path + 'monthly_hourly_load_values_2021.csv', sep=';')
+    data2022 = pd.read_csv(path + 'monthly_hourly_load_values_2022.csv', sep=';')
+    data2023 = pd.read_csv(path + 'monthly_hourly_load_values_2023.csv', sep=',')
 
     # Only Poland
     filtered2021 = data2021[data2021['CountryCode'] == 'PL']
@@ -59,18 +59,18 @@ def prepare_energy_data():
 
 
     combined_data = pd.concat([data_selected2021, data_selected2022, data_selected2023], ignore_index=True)
-    combined_data.insert(0, 'Time', range(1, len(combined_data) + 1))
+    #combined_data.insert(0, 'Time', range(1, len(combined_data) + 1))
 
     # Write data Polska.csv
-    combined_data.to_csv('Energy.csv', index=False, header=True)
+    combined_data.to_csv(path + 'Energy.csv', index=False, header=True)
 
 
-def load_dataset():
-    prepare_weather_data()
-    prepare_energy_data()
-    weather = pd.read_csv('Polska.csv')
-    energy = pd.read_csv('Energy.csv')
-    combined_data = pd.merge(weather, energy, how='outer')
+def load_dataset(path=""):
+    prepare_weather_data(path)
+    prepare_energy_data(path)
+    weather = pd.read_csv(path + 'Polska.csv')
+    energy = pd.read_csv(path + 'Energy.csv')
+    combined_data = pd.concat([weather, energy], axis=1)
     return combined_data
 
 
