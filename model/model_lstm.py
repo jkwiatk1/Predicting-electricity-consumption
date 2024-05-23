@@ -6,6 +6,7 @@ import math
 
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import StepLR
 
 from torch.utils.data import Dataset
 from copy import deepcopy as dc
@@ -15,11 +16,11 @@ from data.prepare_dataset import load_dataset
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 4
-parameters = 1
+lookback = 24
+parameters = 17
 batch_size = 32
-learning_rate = 0.001
-num_epochs = 10
+learning_rate = 0.005
+num_epochs = 20
 loss_function = nn.MSELoss()
 
 
@@ -60,6 +61,7 @@ def prepare_dataframe_for_lstm(df, n_steps):
     for col in df.columns:
         if col == "Energy":
             data[col] = df[col]
+            continue
         for j in range(1, n_steps + 1):
             data[f'{col}(t-{j})'] = df[col].shift(j)
     cols = ['Energy'] + [col for col in data.columns if col != 'Energy']
@@ -258,16 +260,18 @@ class LSTM(nn.Module):
 
         for i in range(x.size(1)):
             for layer in range(self.num_layers):
-                output, (h[layer], c[layer])= self.layers[layer](x[:, i, :], (h[layer], c[layer]))
+                output, (h[layer], c[layer]) = self.layers[layer](x[:, i, :], (h[layer], c[layer]))
 
         last_hidden = h[-1]
         out = self.fc(last_hidden.to(self.device))
         return out.to(self.device)
 
 
-def train_one_epoch(model, optimizer, train_loader, epoch):
+def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
     model.train(True)
-    print(f'Epoch: {epoch + 1}')
+    current_lr = scheduler.get_last_lr()
+    print(f'Epoka {epoch+1}, aktualny LR: {current_lr[0]}')
+    print(f'Epoch: {epoch + 1}, Current Learning Rate: {current_lr}')
     running_loss = 0.0
 
     for batch_index, batch in enumerate(train_loader):
@@ -283,9 +287,11 @@ def train_one_epoch(model, optimizer, train_loader, epoch):
 
         if batch_index % 100 == 99:  # print every 100 batches
             avg_loss_across_batches = running_loss / 100
-            print('Batch {0}, Loss: {1:.3f}'.format(batch_index + 1,
+            print('Batch {0}, Loss: {1:.5f}'.format(batch_index + 1,
                                                     avg_loss_across_batches))
             running_loss = 0.0
+
+    scheduler.step()
     print()
 
 
@@ -312,9 +318,9 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
+    scheduler = StepLR(optimizer, step_size=1, gamma=0.90)
     for epoch in range(num_epochs):
-        train_one_epoch(model, optimizer, train_loader, epoch)
+        train_one_epoch(model, optimizer, scheduler, train_loader, epoch)
         validate_one_epoch(model, test_loader)
 
     test_predictions = model(X_test.to(device)).detach().cpu().numpy().flatten()
@@ -340,7 +346,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
 def run():
     data = load_dataset('../data/')
     data['Time'] = pd.to_datetime(data['Time'])
-    data = data.iloc[:, :parameters + 1]
+    data = data.iloc[:, :parameters + 2]
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
     shifted_df_as_np = shifted_df.to_numpy()
@@ -349,6 +355,11 @@ def run():
     shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
 
     X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np)
+    train_data = list(zip(X_train, y_train))
+    np.random.shuffle(train_data)
+    X_train, y_train = zip(*train_data)
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
 
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
