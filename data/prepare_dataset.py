@@ -71,6 +71,8 @@ def load_dataset(path=""):
     weather = pd.read_csv(path + 'Polska.csv')
     energy = pd.read_csv(path + 'Energy.csv')
     combined_data = pd.concat([weather, energy], axis=1)
+    cols = ['Energy'] + [col for col in combined_data.columns if col != 'Energy']
+    combined_data = combined_data[cols]
     return combined_data
 
 

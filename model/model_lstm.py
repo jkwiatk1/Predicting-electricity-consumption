@@ -12,18 +12,18 @@ from copy import deepcopy as dc
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader
 from data.prepare_dataset import load_dataset
-from torch import matmul
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 7
-batch_size = 16
+lookback = 4
+parameters = 1
+batch_size = 32
 learning_rate = 0.001
 num_epochs = 10
 loss_function = nn.MSELoss()
 
 
-def prepare_dataframe_for_lstm(data, n_steps):
+def prepare_dataframe_for_lstm(df, n_steps):
     """
     Prepare the DataFrame for LSTM training by creating lagged (historical) versions of the output.
 
@@ -55,24 +55,20 @@ def prepare_dataframe_for_lstm(data, n_steps):
     df.dropna(inplace=True)
     return df
     """
-    xs = []
-    ys = []
-    data.set_index('Time', inplace=True)
-    scaler = MinMaxScaler(feature_range=(-1, 1))
-    cols = data.columns
-    index = data.index
-    data = pd.DataFrame(scaler.fit_transform(data))
-    data.columns = cols
-    data.index = index
-    for i in range(len(data) - n_steps):
-        x = data.iloc[i:(i + n_steps)].values
-        y = data.iloc[i + n_steps]['Energy']
-        xs.append(x)
-        ys.append(y)
-    return np.array(xs), np.array(ys)
+    df.set_index('Time', inplace=True)
+    data = pd.DataFrame(index=df.index)
+    for col in df.columns:
+        if col == "Energy":
+            data[col] = df[col]
+        for j in range(1, n_steps + 1):
+            data[f'{col}(t-{j})'] = df[col].shift(j)
+    cols = ['Energy'] + [col for col in data.columns if col != 'Energy']
+    data = data[cols]
+    data.dropna(inplace=True)
+    return data
 
 
-def split_prepare_date(x, y, ratio=0.95):
+def split_prepare_date(shifted_df_as_np, ratio=0.95):
     """
     Splits the dataset into training and testing sets and prepares them for input into an LSTM model.
 
@@ -93,17 +89,26 @@ def split_prepare_date(x, y, ratio=0.95):
              testing features (X_test), and testing targets (y_test), all formatted as PyTorch tensors.
     """
 
-    x = dc(np.flip(x, axis=1))
+    X = shifted_df_as_np[:, 1:]
+    y = shifted_df_as_np[:, 0]
+    X = dc(np.flip(X, axis=1))
 
-    split_index = int(len(x) * ratio)
-    X_train = x[:split_index]
-    X_test = x[split_index:]
+    split_index = int(len(X) * ratio)
+    X_train = X[:split_index]
+    X_test = X[split_index:]
 
     y_train = y[:split_index]
     y_test = y[split_index:]
 
+    X_train = X_train.reshape((-1, lookback * parameters, 1))
+    X_test = X_test.reshape((-1, lookback * parameters, 1))
+
+    y_train = y_train.reshape((-1, 1))
+    y_test = y_test.reshape((-1, 1))
+
     X_train = torch.tensor(X_train).float()
     y_train = torch.tensor(y_train).float()
+
     X_test = torch.tensor(X_test).float()
     y_test = torch.tensor(y_test).float()
 
@@ -154,22 +159,23 @@ class LSTMCell(nn.Module):
         self.hidden_size = hidden_size  # (batch_size, output_size) => output_size
         self.device = device
 
-        self.weight_fg_ih = nn.Parameter(torch.Tensor(input_size, hidden_size), requires_grad=True).to(device)
-        self.weight_fg_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size), requires_grad=True).to(device)
-        self.bias_fg = nn.Parameter(torch.Tensor(hidden_size), requires_grad=True).to(device)
+        self.weight_fg_ih = nn.Parameter(torch.Tensor(input_size, hidden_size), requires_grad=True)
+        self.weight_fg_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size), requires_grad=True)
+        self.bias_fg = nn.Parameter(torch.Tensor(hidden_size), requires_grad=True)
 
-        self.weight_ig_perc_ih = nn.Parameter(torch.Tensor(input_size, hidden_size), requires_grad=True).to(device)
-        self.weight_ig_perc_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size), requires_grad=True).to(device)
-        self.bias_ig_perc = nn.Parameter(torch.Tensor(hidden_size), requires_grad=True).to(device)
+        self.weight_ig_perc_ih = nn.Parameter(torch.Tensor(input_size, hidden_size), requires_grad=True)
+        self.weight_ig_perc_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size), requires_grad=True)
+        self.bias_ig_perc = nn.Parameter(torch.Tensor(hidden_size), requires_grad=True)
 
-        self.weight_ig_ih = nn.Parameter(torch.Tensor(input_size, hidden_size)).to(device)
-        self.weight_ig_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size)).to(device)
-        self.bias_ig = nn.Parameter(torch.Tensor(hidden_size)).to(device)
+        self.weight_ig_ih = nn.Parameter(torch.Tensor(input_size, hidden_size))
+        self.weight_ig_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size))
+        self.bias_ig = nn.Parameter(torch.Tensor(hidden_size))
 
-        self.weight_og_ih = nn.Parameter(torch.Tensor(input_size, hidden_size), requires_grad=True).to(device)
-        self.weight_og_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size), requires_grad=True).to(device)
-        self.bias_og = nn.Parameter(torch.Tensor(hidden_size), requires_grad=True).to(device)
+        self.weight_og_ih = nn.Parameter(torch.Tensor(input_size, hidden_size), requires_grad=True)
+        self.weight_og_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size), requires_grad=True)
+        self.bias_og = nn.Parameter(torch.Tensor(hidden_size), requires_grad=True)
 
+        self.to(device)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -214,19 +220,19 @@ class LSTMCell(nn.Module):
         hx, cx = hidden
 
         # Forget gate (percent long term to remember)
-        fg = torch.sigmoid(matmul(input, self.weight_fg_ih) + matmul(hx, self.weight_fg_hh) + self.bias_fg)
+        fg = torch.sigmoid((input * self.weight_fg_ih) + (hx * self.weight_fg_hh) + self.bias_fg)
 
         # Input gate perc (percent potential memory to remember)
-        ig_perc = torch.sigmoid(matmul(input, self.weight_ig_ih) + matmul(hx, self.weight_ig_hh) + self.bias_ig)
+        ig_perc = torch.sigmoid((input * self.weight_ig_ih) + (hx * self.weight_ig_hh) + self.bias_ig)
 
         # Input gate val (potential long-term memory)
-        ig = torch.tanh(matmul(input, self.weight_ig_ih) + matmul(hx, self.weight_ig_hh) + self.bias_ig)
+        ig = torch.tanh((input * self.weight_ig_ih) + (hx * self.weight_ig_hh) + self.bias_ig)
 
         # New cell state
         updated_long_memory = ((cx * fg) + (ig * ig_perc))
 
         # Output gate
-        og = torch.sigmoid(matmul(input, self.weight_og_ih) + matmul(hx, self.weight_og_hh) + self.bias_og)
+        og = torch.sigmoid((input * self.weight_og_ih) + (hx * self.weight_og_hh) + self.bias_og)
 
         # New hidden state
         updated_short_memory = og * torch.tanh(updated_long_memory)
@@ -252,32 +258,11 @@ class LSTM(nn.Module):
 
         for i in range(x.size(1)):
             for layer in range(self.num_layers):
-                output, (h[layer], c[layer]) = self.layers[layer](x[:, i, :], (h[layer], c[layer]))
+                output, (h[layer], c[layer])= self.layers[layer](x[:, i, :], (h[layer], c[layer]))
 
         last_hidden = h[-1]
         out = self.fc(last_hidden.to(self.device))
         return out.to(self.device)
-
-
-# class LSTM(nn.Module):
-#     def __init__(self, input_size, hidden_size, num_stacked_layers):
-#         super().__init__()
-#         self.hidden_size = hidden_size
-#         self.num_stacked_layers = num_stacked_layers
-#
-#         self.lstm = nn.LSTM(input_size, hidden_size, num_stacked_layers,
-#                             batch_first=True)
-#
-#         self.fc = nn.Linear(hidden_size, 1)
-#
-#     def forward(self, x):
-#         batch_size = x.size(0)
-#         h0 = torch.zeros(self.num_stacked_layers, batch_size, self.hidden_size).to(device)
-#         c0 = torch.zeros(self.num_stacked_layers, batch_size, self.hidden_size).to(device)
-#
-#         out, _ = self.lstm(x, (h0, c0))
-#         out = self.fc(out[:, -1, :])
-#         return out
 
 
 def train_one_epoch(model, optimizer, train_loader, epoch):
@@ -334,12 +319,12 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
 
     test_predictions = model(X_test.to(device)).detach().cpu().numpy().flatten()
 
-    dummies = np.zeros((X_test.shape[0], lookback + 1))
+    dummies = np.zeros((X_test.shape[0], lookback * parameters + 1))
     dummies[:, 0] = test_predictions
     dummies = scaler.inverse_transform(dummies)
     test_predictions = dc(dummies[:, 0])
 
-    dummies = np.zeros((X_test.shape[0], lookback + 1))
+    dummies = np.zeros((X_test.shape[0], lookback * parameters + 1))
     dummies[:, 0] = y_test.flatten()
     dummies = scaler.inverse_transform(dummies)
     new_y_test = dc(dummies[:, 0])
@@ -354,19 +339,23 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
 
 def run():
     data = load_dataset('../data/')
-    #data = data[['Time', 'Energy', 'Relative Humidity_2 m[%]']]
     data['Time'] = pd.to_datetime(data['Time'])
+    data = data.iloc[:, :parameters + 1]
 
-    x, y = prepare_dataframe_for_lstm(data, lookback)
-    X_train, y_train, X_test, y_test = split_prepare_date(x, y)
+    shifted_df = prepare_dataframe_for_lstm(data, lookback)
+    shifted_df_as_np = shifted_df.to_numpy()
+
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
+
+    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np)
 
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
-    model = LSTM(input_size=18, hidden_size=18, num_stacked_layers=1, dev=device)
+    model = LSTM(input_size=1, hidden_size=1, num_stacked_layers=1, dev=device)
     model.to(device)
 
-    scaler = MinMaxScaler(feature_range=(-1, 1))
     run_model(train_dataset, test_dataset, model, X_test, y_test, scaler)
 
 
