@@ -12,14 +12,13 @@ from torch.utils.data import Dataset
 from copy import deepcopy as dc
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader
-from data.prepare_dataset import load_dataset
+from data.prepare_dataset import load_dataset, load_dataset_most_correlation
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 24
-parameters = 17
+lookback = 6
 batch_size = 32
-learning_rate = 0.005
+learning_rate = 0.001
 num_epochs = 20
 loss_function = nn.MSELoss()
 
@@ -61,7 +60,7 @@ def prepare_dataframe_for_lstm(df, n_steps):
     for col in df.columns:
         if col == "Energy":
             data[col] = df[col]
-            continue
+            #continue
         for j in range(1, n_steps + 1):
             data[f'{col}(t-{j})'] = df[col].shift(j)
     cols = ['Energy'] + [col for col in data.columns if col != 'Energy']
@@ -70,7 +69,7 @@ def prepare_dataframe_for_lstm(df, n_steps):
     return data
 
 
-def split_prepare_date(shifted_df_as_np, ratio=0.95):
+def split_prepare_date(shifted_df_as_np, ratio=0.95, param_num=1):
     """
     Splits the dataset into training and testing sets and prepares them for input into an LSTM model.
 
@@ -102,8 +101,8 @@ def split_prepare_date(shifted_df_as_np, ratio=0.95):
     y_train = y[:split_index]
     y_test = y[split_index:]
 
-    X_train = X_train.reshape((-1, lookback * parameters, 1))
-    X_test = X_test.reshape((-1, lookback * parameters, 1))
+    X_train = X_train.reshape((-1, lookback * param_num, 1))
+    X_test = X_test.reshape((-1, lookback * param_num, 1))
 
     y_train = y_train.reshape((-1, 1))
     y_test = y_test.reshape((-1, 1))
@@ -314,7 +313,7 @@ def validate_one_epoch(model, test_loader):
     print()
 
 
-def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
+def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_num):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -325,12 +324,12 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
 
     test_predictions = model(X_test.to(device)).detach().cpu().numpy().flatten()
 
-    dummies = np.zeros((X_test.shape[0], lookback * parameters + 1))
+    dummies = np.zeros((X_test.shape[0], lookback * param_num + 1))
     dummies[:, 0] = test_predictions
     dummies = scaler.inverse_transform(dummies)
     test_predictions = dc(dummies[:, 0])
 
-    dummies = np.zeros((X_test.shape[0], lookback * parameters + 1))
+    dummies = np.zeros((X_test.shape[0], lookback * param_num + 1))
     dummies[:, 0] = y_test.flatten()
     dummies = scaler.inverse_transform(dummies)
     new_y_test = dc(dummies[:, 0])
@@ -344,9 +343,9 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler):
 
 
 def run():
-    data = load_dataset('../data/')
+    data = load_dataset_most_correlation('../data/', 0.5)
     data['Time'] = pd.to_datetime(data['Time'])
-    data = data.iloc[:, :parameters + 2]
+    parameters_num = data.shape[1] - 1
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
     shifted_df_as_np = shifted_df.to_numpy()
@@ -354,7 +353,7 @@ def run():
     scaler = MinMaxScaler(feature_range=(-1, 1))
     shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
 
-    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np)
+    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.95, parameters_num)
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
@@ -367,7 +366,7 @@ def run():
     model = LSTM(input_size=1, hidden_size=1, num_stacked_layers=1, dev=device)
     model.to(device)
 
-    run_model(train_dataset, test_dataset, model, X_test, y_test, scaler)
+    run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 import pandas as pd
+from matplotlib import pyplot as plt
+import seaborn as sns
 
 
 def prepare_weather_data(path):
@@ -57,7 +59,6 @@ def prepare_energy_data(path):
     data_selected2022.rename(columns={'Value': 'Energy'}, inplace=True)
     data_selected2023.rename(columns={'Value': 'Energy'}, inplace=True)
 
-
     combined_data = pd.concat([data_selected2021, data_selected2022, data_selected2023], ignore_index=True)
     #combined_data.insert(0, 'Time', range(1, len(combined_data) + 1))
 
@@ -76,5 +77,38 @@ def load_dataset(path=""):
     return combined_data
 
 
+def load_dataset_most_correlation(path="", percent=1):
+    df = load_dataset(path)
+    df.set_index('Time', inplace=True)
+    correlation_matrix = df.corr()
+    sorted_columns = correlation_matrix['Energy'].drop('Energy').abs().sort_values(ascending=False)
+    top_half_columns = sorted_columns.index[:int(len(sorted_columns) * percent)]
+    top_half_columns = top_half_columns.insert(0, 'Energy')
+    df_subset = df[top_half_columns]
+    df_subset.reset_index(inplace=True)
+    return df_subset
+
+
 if __name__ == "__main__":
-    load_dataset()
+    df = load_dataset()
+    df.set_index('Time', inplace=True)
+    correlation_matrix = df.corr()
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
+    plt.title('Macierz korelacji')
+    plt.show()
+
+    sorted_columns = correlation_matrix['Energy'].drop('Energy').abs().sort_values(ascending=False)
+    for column in sorted_columns.index:
+        correlation_value = correlation_matrix.loc['Energy', column]
+        print(f"Parametr: {column}, Korelacja: {correlation_value}")
+
+    top_half_columns = sorted_columns.index[:len(sorted_columns) // 2]
+    top_half_columns = top_half_columns.insert(0, 'Energy')
+    df_subset = df[top_half_columns]
+    correlation_subset = df_subset.corr()
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(correlation_subset, annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
+    plt.title('Macierz korelacji')
+    df_subset.reset_index(inplace=True)
+    plt.show()
