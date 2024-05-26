@@ -52,9 +52,9 @@ def prepare_energy_data(path):
     filtered2023 = data2023[data2023['CountryCode'] == 'PL']
 
     # Only two collumns
-    data_selected2021 = filtered2021[['Value']]
-    data_selected2022 = filtered2022[['Value']]
-    data_selected2023 = filtered2023[['Value']]
+    data_selected2021 = filtered2021[['Value']].copy()
+    data_selected2022 = filtered2022[['Value']].copy()
+    data_selected2023 = filtered2023[['Value']].copy()
     data_selected2021.rename(columns={'Value': 'Energy'}, inplace=True)
     data_selected2022.rename(columns={'Value': 'Energy'}, inplace=True)
     data_selected2023.rename(columns={'Value': 'Energy'}, inplace=True)
