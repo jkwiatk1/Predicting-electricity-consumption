@@ -41,20 +41,19 @@ class PositionalEncoding(nn.Module):
 
         # create a vector of shape (seq_len)
         position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1)
+        # Create a vector of shape (d_model)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
 
         # apply the sin/cos to even positions
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
-        # pe = pe.unsqueeze(0).transpose(0, 1)
-
         pe = pe.unsqueeze(0)  # become a tensor with size (1, seq_len, d_model)
 
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False)  # requires_grad_ -> this tensor will not be learn
+        x = x + (self.pe[:, :x.size(1), :]).requires_grad_(False)  # requires_grad_ -> this tensor will not be learn
         return self.dropout(x)
 
 
@@ -113,13 +112,8 @@ class MultiHeadAttentionBlock(nn.Module):
 
         # (batch, h, seq_len, head_dim) --> (batch, h, seq_len, seq_len)
         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(head_dim)  # @: matrix multiplication
-
-        # if mask is not None:
-        #     h = attention_scores.size(1)
-        #     mask = mask.unsqueeze(1)
-        #     mask = mask.expand(-1, h, -1, -1)
-        #     attention_scores = attention_scores.masked_fill(mask == 0, float('-1e20'))
         attention_scores = attention_scores.softmax(dim=-1)  # (batch, h, seq_len, seq_len)
+
         if dropout is not None:
             attention_scores = dropout(attention_scores)
 
@@ -162,8 +156,8 @@ class EncoderBlock(nn.Module):
         super().__init__()
         self.self_attention_block = self_attention_block
         self.feed_forward_block = feed_forward_block
-        self.residual_connections_1 = nn.Sequential(ResidualConnection(dropout)) # Sequential.modules
-        self.residual_connections_2 = nn.Sequential(ResidualConnection(dropout)) # Sequential.modules
+        self.residual_connections_1 = ResidualConnection(dropout) # Sequential.modules
+        self.residual_connections_2 = ResidualConnection(dropout)  # Sequential.modules
 
     def forward(self, x, src_mask):
         x = self.residual_connections_1(x, lambda x: self.self_attention_block(x, x, x, src_mask))
@@ -183,56 +177,55 @@ class Encoder(nn.Module):
         return self.norm(x)
 
 
-class ProjectionLayer(nn.Module):
-    """
-    Last layer used for predicting
-    """
+# class ProjectionLayer(nn.Module):
+#     """
+#     Last layer used for predicting
+#     """
+#
+#     def __init__(self, d_model, output_size=1) -> None:
+#         super().__init__()
+#         self.projection = nn.Linear(d_model, output_size)
+#
+#     def forward(self, x) -> None:
+#         # (batch, seq_len, d_model) --> (batch, seq_len, output_size)
+#         return self.projection(x)
 
-    def __init__(self, d_model, output_size=1) -> None:
-        super().__init__()
-        self.projection = nn.Linear(d_model, output_size)
 
-    def forward(self, x) -> None:
-        # (batch, seq_len, d_model) --> (batch, seq_len, output_size)
-        return self.projection(x)
+class TransformerModel(nn.Module):
+    def __init__(self, d_model, nhead, num_encoder_layers, dim_feedforward, dropout=0.1):
+        super(TransformerModel, self).__init__()
+        self.model_type = 'Transformer'
+        self.pos_encoder = PositionalEncoding(d_model, dropout)
 
+        # Create custom encoder layers
+        encoder_blocks = []
+        for _ in range(num_encoder_layers):
+            encoder_self_attention_block = MultiHeadAttentionBlock(d_model, nhead, dropout)
+            feed_forward_block = FeedForwardBlock(d_model, dim_feedforward, dropout)
+            encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block, dropout)
+            encoder_blocks.append(encoder_block)
 
-class Transformer(nn.Module):
-    def __init__(self, encoder: Encoder, src_pos: PositionalEncoding, projection_layer: ProjectionLayer,
-                 heads_num) -> None:
-        super().__init__()
-        self.encoder = encoder
-        self.src_pos = src_pos
-        self.src_mask = None
-        self.projection_layer = projection_layer
-        self.h = heads_num
+        self.transformer_encoder = Encoder(nn.ModuleList(encoder_blocks))
+        self.d_model = d_model
+        self.projection = nn.Linear(d_model, 1)
+        self.init_weights()
 
-    def encode(self, src, src_mask):
-        # (batch, seq_len, d_model)
-        src = self.src_pos(src)
-        return self.encoder(src, src_mask)
-
-    def project(self, x):
-        # (batch, seq_len, output_size)
-        return self.projection_layer(x)
+    def init_weights(self):
+        initrange = 0.1
+        self.projection.bias.data.zero_()
+        self.projection.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src):
-        if self.src_mask is None or self.src_mask.size(2) != len(src):
-            device = src.device
-            batch_size = src.size(0)
-            sz = src.size(1)
-            self.src_mask = self._generate_square_subsequent_mask(sz, batch_size).to(device)
+        src = self.pos_encoder(src)
+        output = self.transformer_encoder(src, None)  # Here `None` is used as mask
+        output = output.mean(dim=1)
+        output = self.projection(output)
+        return output
 
-        encoder_output = self.encode(src, self.src_mask)
-        return self.project(encoder_output)
-
-    def _generate_square_subsequent_mask(self, sz, bt_size):
-        mask = torch.triu(torch.ones(bt_size, sz, sz) * float('-inf'), diagonal=1)
-        return mask
 
 
 def build_transformer(d_model: int = 512, N: int = 2, h: int = 8, dropout: float = 0.1,
-                      d_ff: int = 2048, seq_len: int = 100) -> Transformer:
+                      d_ff: int = 2048, seq_len: int = 100) -> TransformerModel:
     """
     Args:
         d_model:
@@ -244,89 +237,224 @@ def build_transformer(d_model: int = 512, N: int = 2, h: int = 8, dropout: float
     Returns:
 
     """
-    # Create the positional encoding layer
-    src_pos = PositionalEncoding(d_model, dropout, seq_len)
-
-    # Create the encoder blocks
-    encoder_blocks = []
-    for _ in range(N):
-        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
-        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
-        encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block, dropout)
-        encoder_blocks.append(encoder_block)
-
-    # Create the encoder
-    encoder = Encoder(nn.ModuleList(encoder_blocks))
-
-    # Create the projection layer
-    projection_layer = ProjectionLayer(d_model)
-
     # Create the transformer
-    transformer = Transformer(encoder, src_pos, projection_layer, h)
-
-    # Initialize the parameters
-    for p in transformer.parameters():
-        if p.dim() > 1:
-            nn.init.xavier_uniform_(p)
-
-    return transformer
+    model = TransformerModel(d_model=d_model, nhead=h, num_encoder_layers=N, dim_feedforward=d_ff, dropout=dropout)
+    return model
 
 
-def get_batch(source, i, batch_size, input_window):
-    seq_len = min(batch_size, len(source) - 1 - i)
-    data = source[i:i + seq_len]
-    input = torch.stack(torch.stack([item[0] for item in data]).chunk(input_window, 1))
-    target = torch.stack(torch.stack([item[1] for item in data]).chunk(input_window, 1))
-    return input, target
+# Define helper functions and dataset preparation
+def prepare_dataframe_for_transformer(df, n_steps):
+    df.set_index('Time', inplace=True)
+    data = pd.DataFrame(index=df.index)
+    for col in df.columns:
+        if col == "Energy":
+            data[col] = df[col]
+        for j in range(1, n_steps + 1):
+            data[f'{col}(t-{j})'] = df[col].shift(j)
+    cols = ['Energy'] + [col for col in data.columns if col != 'Energy']
+    data = data[cols]
+    data.dropna(inplace=True)
+    return data
 
 
-def create_inout_sequences(input_data, tw, output_window):
-    inout_seq = []
-    L = len(input_data)
-    for i in range(L - tw):
-        train_seq = input_data[i:i + tw]
-        train_label = input_data[i + output_window:i + tw + output_window]
-        inout_seq.append((train_seq, train_label))
+def split_prepare_date(shifted_df_as_np, ratio=0.95, param_num=1):
+    X = shifted_df_as_np[:, 1:]
+    y = shifted_df_as_np[:, 0]
+    X = dc(np.flip(X, axis=1))
+    split_index = int(len(X) * ratio)
+    X_train = X[:split_index]
+    X_test = X[split_index:]
+    y_train = y[:split_index]
+    y_test = y[split_index:]
+    X_train = X_train.reshape((-1, lookback * param_num, 1))
+    X_test = X_test.reshape((-1, lookback * param_num, 1))
+    y_train = y_train.reshape((-1, 1))
+    y_test = y_test.reshape((-1, 1))
+    X_train = torch.tensor(X_train).float()
+    y_train = torch.tensor(y_train).float()
+    X_test = torch.tensor(X_test).float()
+    y_test = torch.tensor(y_test).float()
+    return X_train, y_train, X_test, y_test
 
-    return torch.FloatTensor(inout_seq)
+
+class TimeSeriesDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, i):
+        return self.X[i], self.y[i]
 
 
-def test_transformer():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Define training and evaluation functions
+def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
+    model.train()
+    current_lr = scheduler.get_last_lr()
+    print(f'Epoch {epoch + 1}, Current Learning Rate: {current_lr}')
+    running_loss = 0.0
+    for batch_index, batch in enumerate(train_loader):
+        x_batch, y_batch = batch[0].to(device), batch[1].to(device)
+        optimizer.zero_grad()
+        output = model(x_batch)
+        loss = loss_function(output.view(-1), y_batch.view(-1))
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+        if batch_index % 100 == 99:  # print every 100 batches
+            avg_loss_across_batches = running_loss / 100
+            print('Batch {0}, Loss: {1:.5f}'.format(batch_index + 1, avg_loss_across_batches))
+            running_loss = 0.0
 
-    input_window = 10
-    output_window = 1
-    L = 1790  # Długość sztucznego szeregu czasowego
-    data = np.sin(np.linspace(0, 100, L)) + np.random.normal(0, 0.1, (L,))
+    scheduler.step()
+    print()
 
-    train_data = create_inout_sequences(data, input_window, output_window)
 
-    d_model = 512  # Wymiar ukryty modelu
-    N = 2  # Liczba bloków w encoderze
-    h = 8  # Liczba głów w MultiHeadAttention
-    dropout = 0.1
-    d_ff = 2048  # Wymiar warstwy FeedForward
-    batch_size = 250
-    transformer = build_transformer(d_model, N, h, dropout, d_ff, seq_len=input_window)
+def validate_one_epoch(model, test_loader):
+    model.eval()
+    running_loss = 0.0
+    with torch.no_grad():
+        for batch_index, batch in enumerate(test_loader):
+            x_batch, y_batch = batch[0].to(device), batch[1].to(device)
+            output = model(x_batch)
+            loss = loss_function(output.view(-1), y_batch.view(-1))
+            running_loss += loss.item()
+    avg_loss_across_batches = running_loss / len(test_loader)
+    print('Validation Loss: {0:.3f}'.format(avg_loss_across_batches))
+    print('***************************************************')
+    print()
 
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(transformer.parameters(), lr=0.001)
-    epochs = 5
 
-    for epoch in range(1, epochs + 1):
-        transformer.train()
-        total_loss = 0.
-        for batch, i in enumerate(range(0, len(train_data) - 1, batch_size)):
-            data, targets = get_batch(train_data, i, batch_size, input_window)
-            optimizer.zero_grad()
-            output = transformer(data)
-            loss = criterion(output, targets)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
+def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_num):
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.90)
+    for epoch in range(num_epochs):
+        train_one_epoch(model, optimizer, scheduler, train_loader, epoch)
+        validate_one_epoch(model, test_loader)
 
-        print(f'Epoch {epoch}, Loss: {total_loss / len(train_data)}')
+    test_predictions = []
+    with torch.no_grad():
+        model.eval()
+        for i in range(0, len(X_test), batch_size):
+            batch_X_test = X_test[i:i + batch_size].to(device)
+            batch_predictions = model(batch_X_test).detach().cpu().numpy().flatten()
+            test_predictions.extend(batch_predictions)
+            torch.cuda.empty_cache()
+
+    test_predictions = np.array(test_predictions)
+
+    dummies = np.zeros((X_test.shape[0], lookback * param_num + 1))
+    dummies[:, 0] = test_predictions
+    dummies = scaler.inverse_transform(dummies)
+    test_predictions = dc(dummies[:, 0])
+
+    dummies = np.zeros((X_test.shape[0], lookback * param_num + 1))
+    dummies[:, 0] = y_test.flatten()
+    dummies = scaler.inverse_transform(dummies)
+    new_y_test = dc(dummies[:, 0])
+
+    plt.plot(new_y_test, label='Actual Close')
+    plt.plot(test_predictions, label='Predicted Close')
+    plt.xlabel('Day')
+    plt.ylabel('Close')
+    plt.legend()
+    plt.show()
+
+# Load data and run the model
+def run():
+    torch.cuda.empty_cache()
+    data = load_dataset_most_correlation('../data/', 0.5)
+    data['Time'] = pd.to_datetime(data['Time'])
+    data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
+    parameters_num = data.shape[1] - 1
+
+    shifted_df = prepare_dataframe_for_transformer(data, lookback)
+    shifted_df_as_np = shifted_df.to_numpy()
+
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
+
+    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.95, parameters_num)
+    train_data = list(zip(X_train, y_train))
+    np.random.shuffle(train_data)
+    X_train, y_train = zip(*train_data)
+    X_train = np.array(X_train, dtype=object)
+    y_train = np.array(y_train, dtype=object)
+    # X_train = np.array([x.numpy() for x in X_train], dtype=object)
+    # y_train = np.array([y.numpy() for y in y_train], dtype=object)
+    train_dataset = TimeSeriesDataset(X_train, y_train)
+    test_dataset = TimeSeriesDataset(X_test, y_test)
+
+    model = TransformerModel(d_model=512, nhead=8, num_encoder_layers=6, dim_feedforward=2048, dropout=0.1).to(device)
+    model.to(device)
+
+    run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num)
 
 
 if __name__ == "__main__":
-    test_transformer()
+    run()
+
+### FIRST VERSION
+
+# def get_batch(source, i, batch_size, input_window):
+#     seq_len = min(batch_size, len(source) - 1 - i)
+#     data = source[i:i + seq_len]
+#     input = torch.stack(torch.stack([item[0] for item in data]).chunk(input_window, 1))
+#     target = torch.stack(torch.stack([item[1] for item in data]).chunk(input_window, 1))
+#     return input, target
+#
+#
+# def create_inout_sequences(input_data, tw, output_window):
+#     inout_seq = []
+#     L = len(input_data)
+#     for i in range(L - tw):
+#         train_seq = input_data[i:i + tw]
+#         train_label = input_data[i + output_window:i + tw + output_window]
+#         inout_seq.append((train_seq, train_label))
+#
+#     return torch.FloatTensor(inout_seq)
+#
+#
+# def test_transformer():
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#
+#     input_window = 10
+#     output_window = 1
+#     L = 1790  # Długość sztucznego szeregu czasowego
+#     data = np.sin(np.linspace(0, 100, L)) + np.random.normal(0, 0.1, (L,))
+#
+#     train_data = create_inout_sequences(data, input_window, output_window)
+#
+#     d_model = 512  # Wymiar ukryty modelu
+#     N = 2  # Liczba bloków w encoderze
+#     h = 8  # Liczba głów w MultiHeadAttention
+#     dropout = 0.1
+#     d_ff = 2048  # Wymiar warstwy FeedForward
+#     batch_size = 250
+#     transformer = build_transformer(d_model, N, h, dropout, d_ff, seq_len=input_window)
+#
+#     criterion = nn.MSELoss()
+#     optimizer = torch.optim.Adam(transformer.parameters(), lr=0.001)
+#     epochs = 5
+#
+#     for epoch in range(1, epochs + 1):
+#         transformer.train()
+#         total_loss = 0.
+#         for batch, i in enumerate(range(0, len(train_data) - 1, batch_size)):
+#             data, targets = get_batch(train_data, i, batch_size, input_window)
+#             optimizer.zero_grad()
+#             output = transformer(data)
+#             loss = criterion(output, targets)
+#             loss.backward()
+#             optimizer.step()
+#             total_loss += loss.item()
+#
+#         print(f'Epoch {epoch}, Loss: {total_loss / len(train_data)}')
+
+
+# if __name__ == "__main__":
+#     test_transformer()
