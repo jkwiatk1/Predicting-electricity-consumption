@@ -16,7 +16,7 @@ from data.prepare_dataset import load_dataset, load_dataset_most_correlation
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 6
+lookback = 10
 batch_size = 32
 learning_rate = 0.001
 num_epochs = 20
@@ -29,11 +29,11 @@ def prepare_dataframe_for_lstm(df, n_steps):
 
     This function transforms the input DataFrame by adding new columns that represent the closing prices
     of the stock for 'n_steps' previous days. These columns are necessary for the LSTM model to learn
-    from historical data and predict future stock prices. The function ensures the DataFrame is indexed
+    from historical data and predict future values. The function ensures the DataFrame is indexed
     by date and excludes any rows with missing data caused by the shifting operation.
 
     Parameters:
-    - df (pd.DataFrame): The original DataFrame containing at least the 'date' and 'close' columns.
+    - df (pd.DataFrame): The original DataFrame containing at least the 'date' and 'value' columns.
     - n_steps (int): The number of historical steps to create. Each step represents a previous day's
                      closing price to include as a new column in the DataFrame.
 
@@ -345,6 +345,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
 def run():
     data = load_dataset_most_correlation('../data/', 0.5)
     data['Time'] = pd.to_datetime(data['Time'])
+    data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
     parameters_num = data.shape[1] - 1
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
@@ -357,8 +358,8 @@ def run():
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
-    X_train = np.array(X_train)
-    y_train = np.array(y_train)
+    X_train = np.array(X_train, dtype=object)
+    y_train = np.array(y_train, dtype=object)
 
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)

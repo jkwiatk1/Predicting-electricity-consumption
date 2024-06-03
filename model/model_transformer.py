@@ -21,7 +21,7 @@ device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 lookback = 10
 batch_size = 32
 learning_rate = 0.001
-num_epochs = 3
+num_epochs = 15
 loss_function = nn.MSELoss()
 
 
@@ -177,20 +177,6 @@ class Encoder(nn.Module):
         return self.norm(x)
 
 
-# class ProjectionLayer(nn.Module):
-#     """
-#     Last layer used for predicting
-#     """
-#
-#     def __init__(self, d_model, output_size=1) -> None:
-#         super().__init__()
-#         self.projection = nn.Linear(d_model, output_size)
-#
-#     def forward(self, x) -> None:
-#         # (batch, seq_len, d_model) --> (batch, seq_len, output_size)
-#         return self.projection(x)
-
-
 class TransformerModel(nn.Module):
     def __init__(self, d_model, nhead, num_encoder_layers, dim_feedforward, dropout=0.1):
         super(TransformerModel, self).__init__()
@@ -221,7 +207,6 @@ class TransformerModel(nn.Module):
         output = output.mean(dim=1)
         output = self.projection(output)
         return output
-
 
 
 def build_transformer(d_model: int = 512, N: int = 2, h: int = 8, dropout: float = 0.1,
@@ -384,8 +369,6 @@ def run():
     X_train, y_train = zip(*train_data)
     X_train = np.array(X_train, dtype=object)
     y_train = np.array(y_train, dtype=object)
-    # X_train = np.array([x.numpy() for x in X_train], dtype=object)
-    # y_train = np.array([y.numpy() for y in y_train], dtype=object)
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
@@ -397,64 +380,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
-### FIRST VERSION
-
-# def get_batch(source, i, batch_size, input_window):
-#     seq_len = min(batch_size, len(source) - 1 - i)
-#     data = source[i:i + seq_len]
-#     input = torch.stack(torch.stack([item[0] for item in data]).chunk(input_window, 1))
-#     target = torch.stack(torch.stack([item[1] for item in data]).chunk(input_window, 1))
-#     return input, target
-#
-#
-# def create_inout_sequences(input_data, tw, output_window):
-#     inout_seq = []
-#     L = len(input_data)
-#     for i in range(L - tw):
-#         train_seq = input_data[i:i + tw]
-#         train_label = input_data[i + output_window:i + tw + output_window]
-#         inout_seq.append((train_seq, train_label))
-#
-#     return torch.FloatTensor(inout_seq)
-#
-#
-# def test_transformer():
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#
-#     input_window = 10
-#     output_window = 1
-#     L = 1790  # Długość sztucznego szeregu czasowego
-#     data = np.sin(np.linspace(0, 100, L)) + np.random.normal(0, 0.1, (L,))
-#
-#     train_data = create_inout_sequences(data, input_window, output_window)
-#
-#     d_model = 512  # Wymiar ukryty modelu
-#     N = 2  # Liczba bloków w encoderze
-#     h = 8  # Liczba głów w MultiHeadAttention
-#     dropout = 0.1
-#     d_ff = 2048  # Wymiar warstwy FeedForward
-#     batch_size = 250
-#     transformer = build_transformer(d_model, N, h, dropout, d_ff, seq_len=input_window)
-#
-#     criterion = nn.MSELoss()
-#     optimizer = torch.optim.Adam(transformer.parameters(), lr=0.001)
-#     epochs = 5
-#
-#     for epoch in range(1, epochs + 1):
-#         transformer.train()
-#         total_loss = 0.
-#         for batch, i in enumerate(range(0, len(train_data) - 1, batch_size)):
-#             data, targets = get_batch(train_data, i, batch_size, input_window)
-#             optimizer.zero_grad()
-#             output = transformer(data)
-#             loss = criterion(output, targets)
-#             loss.backward()
-#             optimizer.step()
-#             total_loss += loss.item()
-#
-#         print(f'Epoch {epoch}, Loss: {total_loss / len(train_data)}')
-
-
-# if __name__ == "__main__":
-#     test_transformer()
