@@ -7,7 +7,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import math
-
+import sys
+sys.path.append('../')
 import torch
 import torch.nn as nn
 
@@ -18,10 +19,10 @@ from data.prepare_dataset import load_dataset, load_dataset_most_correlation
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 10
+lookback = 4
 batch_size = 32
-learning_rate = 0.001
-num_epochs = 15
+learning_rate = 0.0001
+num_epochs = 10
 loss_function = nn.MSELoss()
 
 
@@ -87,7 +88,7 @@ class MultiHeadAttentionBlock(nn.Module):
         """
         d_model: The number of features in the transformer model's internal representations (also the size of
         embeddings). This controls how much a model can remember and process.
-        nhead: The number of attention heads in the multi-head self-attention mechanism.
+        h: The number of attention heads in the multi-head self-attention mechanism.
         dropout: The dropout probability.
         """
         super().__init__()
@@ -98,11 +99,11 @@ class MultiHeadAttentionBlock(nn.Module):
         self.head_dim = d_model // h  # also called d_k in paper
         assert h * self.head_dim == d_model, "Embed size have to be equal to this multiplication"
 
-        self.w_q = nn.Linear(d_model, d_model)  # Wq, TODO check bias = False
-        self.w_k = nn.Linear(d_model, d_model)  # Wk, TODO check bias = False
-        self.w_v = nn.Linear(d_model, d_model)  # Wv, TODO check bias = False
+        self.w_q = nn.Linear(d_model, d_model, bias=False)  # Wq, TODO check bias = False
+        self.w_k = nn.Linear(d_model, d_model, bias=False)  # Wk, TODO check bias = False
+        self.w_v = nn.Linear(d_model, d_model, bias=False)  # Wv, TODO check bias = False
 
-        self.w_o = nn.Linear(self.head_dim * self.h, d_model)  # Wo, in paper it is d_v * h, d_v == d_k == head_dim,
+        self.w_o = nn.Linear(self.head_dim * self.h, d_model, bias=False)  # Wo, in paper it is d_v * h, d_v == d_k == head_dim,
         # self.head_dim * self.h should be == d_model
         self.dropout = nn.Dropout(dropout)
 
@@ -112,12 +113,14 @@ class MultiHeadAttentionBlock(nn.Module):
 
         # (batch, h, seq_len, head_dim) --> (batch, h, seq_len, seq_len)
         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(head_dim)  # @: matrix multiplication
+        if mask is not None:
+            attention_scores.masked_fill_(mask == 0, -1e9)
         attention_scores = attention_scores.softmax(dim=-1)  # (batch, h, seq_len, seq_len)
 
         if dropout is not None:
             attention_scores = dropout(attention_scores)
 
-        return (attention_scores @ value)
+        return (attention_scores @ value), attention_scores
 
     def forward(self, q, k, v, mask):
         q_prim = self.w_q(q)  # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
@@ -131,7 +134,7 @@ class MultiHeadAttentionBlock(nn.Module):
         k_prim = k_prim.view(k_prim.shape[0], k_prim.shape[1], self.h, self.head_dim).transpose(1, 2)
         v_prim = v_prim.view(v_prim.shape[0], v_prim.shape[1], self.h, self.head_dim).transpose(1, 2)
 
-        x = MultiHeadAttentionBlock.attention(q_prim, k_prim, v_prim, mask, self.dropout)
+        x, self.attention_scores = MultiHeadAttentionBlock.attention(q_prim, k_prim, v_prim, mask, self.dropout)
 
         # (batch, h, seq_len, head_dim) --> (batch, seq_len, h, head_dim) --> (batch, seq_len, d_model)
         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.head_dim)
@@ -174,7 +177,7 @@ class Encoder(nn.Module):
     def forward(self, x, mask):
         for layer in self.layers:
             x = layer(x, mask)
-        return self.norm(x)
+        return x
 
 
 class TransformerModel(nn.Module):
@@ -316,7 +319,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.90)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.85)
     for epoch in range(num_epochs):
         train_one_epoch(model, optimizer, scheduler, train_loader, epoch)
         validate_one_epoch(model, test_loader)
@@ -352,9 +355,9 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
 # Load data and run the model
 def run():
     torch.cuda.empty_cache()
-    data = load_dataset_most_correlation('../data/', 0.5)
+    data = load_dataset_most_correlation('../data/', 0.05)
     data['Time'] = pd.to_datetime(data['Time'])
-    data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
+    #data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
     parameters_num = data.shape[1] - 1
 
     shifted_df = prepare_dataframe_for_transformer(data, lookback)
@@ -367,8 +370,8 @@ def run():
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
-    X_train = np.array(X_train, dtype=object)
-    y_train = np.array(y_train, dtype=object)
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
