@@ -19,10 +19,10 @@ from data.prepare_dataset import load_dataset, load_dataset_most_correlation
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 4
+lookback = 2
 batch_size = 32
 learning_rate = 0.0001
-num_epochs = 10
+num_epochs = 2
 loss_function = nn.MSELoss()
 
 
@@ -181,9 +181,11 @@ class Encoder(nn.Module):
 
 
 class TransformerModel(nn.Module):
-    def __init__(self, d_model, nhead, num_encoder_layers, dim_feedforward, dropout=0.1):
+    def __init__(self, input_dim=1, d_model=512, nhead=4, num_encoder_layers=4, dim_feedforward=1024, dropout=0.1):
         super(TransformerModel, self).__init__()
         self.model_type = 'Transformer'
+
+        self.encoder = nn.Linear(input_dim, d_model)
         self.pos_encoder = PositionalEncoding(d_model, dropout)
 
         # Create custom encoder layers
@@ -203,13 +205,13 @@ class TransformerModel(nn.Module):
         initrange = 0.1
         self.projection.bias.data.zero_()
         self.projection.weight.data.uniform_(-initrange, initrange)
-
-    def forward(self, src):
-        src = self.pos_encoder(src)
-        output = self.transformer_encoder(src, None)  # Here `None` is used as mask
-        output = output.mean(dim=1)
-        output = self.projection(output)
-        return output
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x, None)
+        x = x.mean(dim=1)
+        x = self.projection(x)
+        return x
 
 
 def build_transformer(d_model: int = 512, N: int = 2, h: int = 8, dropout: float = 0.1,
@@ -355,7 +357,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
 # Load data and run the model
 def run():
     torch.cuda.empty_cache()
-    data = load_dataset_most_correlation('../data/', 0.05)
+    data = load_dataset_most_correlation('../data/', 0.5)
     data['Time'] = pd.to_datetime(data['Time'])
     #data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
     parameters_num = data.shape[1] - 1
@@ -375,7 +377,7 @@ def run():
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
-    model = TransformerModel(d_model=512, nhead=8, num_encoder_layers=6, dim_feedforward=2048, dropout=0.1).to(device)
+    model = TransformerModel(input_dim=1, d_model=512, nhead=4, num_encoder_layers=4, dim_feedforward=1024, dropout=0.1)
     model.to(device)
 
     run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num)
