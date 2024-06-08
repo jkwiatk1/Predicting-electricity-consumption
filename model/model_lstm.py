@@ -7,7 +7,8 @@ import math
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import StepLR
-
+import sys
+sys.path.append('../')
 from torch.utils.data import Dataset
 from copy import deepcopy as dc
 from sklearn.preprocessing import MinMaxScaler
@@ -16,10 +17,11 @@ from data.prepare_dataset import load_dataset, load_dataset_most_correlation
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 10
+lookback = 24
+lookforward = 10
 batch_size = 32
 learning_rate = 0.001
-num_epochs = 20
+num_epochs = 10
 loss_function = nn.MSELoss()
 
 
@@ -300,7 +302,6 @@ def validate_one_epoch(model, test_loader):
 
     for batch_index, batch in enumerate(test_loader):
         x_batch, y_batch = batch[0].to(device), batch[1].to(device)
-
         with torch.no_grad():
             output = model(x_batch)
             loss = loss_function(output, y_batch)
@@ -317,12 +318,22 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.90)
+    scheduler = StepLR(optimizer, step_size=1, gamma=0.9)
     for epoch in range(num_epochs):
         train_one_epoch(model, optimizer, scheduler, train_loader, epoch)
         validate_one_epoch(model, test_loader)
 
-    test_predictions = model(X_test.to(device)).detach().cpu().numpy().flatten()
+    #X_test = X_test[:82, :, :]
+    #y_test = y_test[:82, :]
+    pred = model(X_test.to(device))
+    for t in range(0, lookforward, 1):
+        pred = model(X_test.to(device))
+        for k in range(0, lookback - 1, 1):
+            X_test[:, k, :] = X_test[:, k+1, :]
+        X_test[:, -1, :] = pred
+    loss = loss_function(pred.cpu(), y_test)
+    print(f"Test loss: {loss}")
+    test_predictions = pred.detach().cpu().numpy().flatten()
 
     dummies = np.zeros((X_test.shape[0], lookback * param_num + 1))
     dummies[:, 0] = test_predictions
@@ -334,22 +345,27 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
     dummies = scaler.inverse_transform(dummies)
     new_y_test = dc(dummies[:, 0])
 
+    test_predictions = test_predictions[:-lookforward]
+    new_y_test = new_y_test[lookforward:]
+
     plt.plot(new_y_test, label='Actual Close')
     plt.plot(test_predictions, label='Predicted Close')
     plt.xlabel('Day')
     plt.ylabel('Close')
     plt.legend()
     plt.show()
+    plt.grid(True)
 
 
 def run():
-    data = load_dataset_most_correlation('../data/', 0.5)
+    data = load_dataset_most_correlation('../data/', 0.05)
     data['Time'] = pd.to_datetime(data['Time'])
-    data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
+    #data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
     parameters_num = data.shape[1] - 1
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
-    shifted_df_as_np = shifted_df.to_numpy()
+    shifted = shifted_df.copy()
+    shifted_df_as_np = shifted.to_numpy()
 
     scaler = MinMaxScaler(feature_range=(-1, 1))
     shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
@@ -358,8 +374,8 @@ def run():
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
-    X_train = np.array(X_train, dtype=object)
-    y_train = np.array(y_train, dtype=object)
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
 
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
