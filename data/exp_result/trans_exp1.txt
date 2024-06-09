@@ -1,0 +1,122 @@
+Epoch 1, Current Learning Rate: [0.001]
+Batch 100, Loss: 43.60047
+Batch 200, Loss: 0.09165
+Batch 300, Loss: 0.04146
+Batch 400, Loss: 0.03320
+Batch 500, Loss: 0.02071
+Batch 600, Loss: 0.02396
+Batch 700, Loss: 0.01526
+
+Validation Loss: 0.019
+***************************************************
+
+Epoch 2, Current Learning Rate: [0.00085]
+Batch 100, Loss: 0.01491
+Batch 200, Loss: 0.01200
+Batch 300, Loss: 0.01099
+Batch 400, Loss: 0.01282
+Batch 500, Loss: 0.01019
+Batch 600, Loss: 0.01035
+Batch 700, Loss: 0.00911
+
+Validation Loss: 0.015
+***************************************************
+
+Epoch 3, Current Learning Rate: [0.0007224999999999999]
+Batch 100, Loss: 0.00936
+Batch 200, Loss: 0.00850
+Batch 300, Loss: 0.00888
+Batch 400, Loss: 0.00763
+Batch 500, Loss: 0.00798
+Batch 600, Loss: 0.00944
+Batch 700, Loss: 0.00681
+
+Validation Loss: 0.025
+***************************************************
+
+Epoch 4, Current Learning Rate: [0.000614125]
+Batch 100, Loss: 0.00867
+Batch 200, Loss: 0.00614
+Batch 300, Loss: 0.00681
+Batch 400, Loss: 0.00755
+Batch 500, Loss: 0.00613
+Batch 600, Loss: 0.00550
+Batch 700, Loss: 0.00598
+
+Validation Loss: 0.006
+***************************************************
+
+Epoch 5, Current Learning Rate: [0.00052200625]
+Batch 100, Loss: 0.00696
+Batch 200, Loss: 0.00476
+Batch 300, Loss: 0.00639
+Batch 400, Loss: 0.00627
+Batch 500, Loss: 0.00599
+Batch 600, Loss: 0.00508
+Batch 700, Loss: 0.00649
+
+Validation Loss: 0.017
+***************************************************
+
+Epoch 6, Current Learning Rate: [0.00044370531249999997]
+Batch 100, Loss: 0.00485
+Batch 200, Loss: 0.00481
+Batch 300, Loss: 0.00545
+Batch 400, Loss: 0.00496
+Batch 500, Loss: 0.00403
+Batch 600, Loss: 0.00641
+Batch 700, Loss: 0.00451
+
+Validation Loss: 0.013
+***************************************************
+
+Epoch 7, Current Learning Rate: [0.00037714951562499996]
+Batch 100, Loss: 0.00376
+Batch 200, Loss: 0.00505
+Batch 300, Loss: 0.00451
+Batch 400, Loss: 0.00361
+Batch 500, Loss: 0.00451
+Batch 600, Loss: 0.00486
+Batch 700, Loss: 0.00474
+
+Validation Loss: 0.020
+***************************************************
+
+Epoch 8, Current Learning Rate: [0.00032057708828124994]
+Batch 100, Loss: 0.00450
+Batch 200, Loss: 0.00591
+Batch 300, Loss: 0.00362
+Batch 400, Loss: 0.00389
+Batch 500, Loss: 0.00443
+Batch 600, Loss: 0.00346
+Batch 700, Loss: 0.00460
+
+Validation Loss: 0.024
+***************************************************
+
+Epoch 9, Current Learning Rate: [0.0002724905250390624]
+Batch 100, Loss: 0.00312
+Batch 200, Loss: 0.00380
+Batch 300, Loss: 0.00400
+Batch 400, Loss: 0.00373
+Batch 500, Loss: 0.00482
+Batch 600, Loss: 0.00349
+Batch 700, Loss: 0.00378
+
+Validation Loss: 0.006
+***************************************************
+
+Epoch 10, Current Learning Rate: [0.00023161694628320305]
+Batch 100, Loss: 0.00383
+Batch 200, Loss: 0.00373
+Batch 300, Loss: 0.00362
+Batch 400, Loss: 0.00283
+Batch 500, Loss: 0.00298
+Batch 600, Loss: 0.00406
+Batch 700, Loss: 0.00368
+
+Validation Loss: 0.007
+***************************************************
+
+
+Process finished with exit code 0
