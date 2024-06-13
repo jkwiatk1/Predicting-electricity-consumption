@@ -103,12 +103,13 @@ if __name__ == "__main__":
         correlation_value = correlation_matrix.loc['Energy', column]
         print(f"Parametr: {column}, Korelacja: {correlation_value}")
 
-    top_half_columns = sorted_columns.index[:len(sorted_columns) // 2]
+    top_half_columns = sorted_columns.index[:int(len(sorted_columns) // 1.8)]
     top_half_columns = top_half_columns.insert(0, 'Energy')
     df_subset = df[top_half_columns]
     correlation_subset = df_subset.corr()
     plt.figure(figsize=(8, 6))
     sns.heatmap(correlation_subset, annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
     plt.title('Macierz korelacji')
-    df_subset.reset_index(inplace=True)
+    plt.tight_layout(pad=2.0)  # Zwiększenie marginesów do 2 cali
     plt.show()
+

@@ -14,14 +14,16 @@ from copy import deepcopy as dc
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader
 from data.prepare_dataset import load_dataset, load_dataset_most_correlation
+from utils import save_fig_loss, save_fig
 
 # Config
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 24
+lookback = 6
 lookforward = 10
 batch_size = 32
 learning_rate = 0.001
-num_epochs = 10
+num_epochs = 3
+percent_params = 0.1
 loss_function = nn.MSELoss()
 
 
@@ -271,6 +273,7 @@ class LSTM(nn.Module):
 def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
     model.train(True)
     current_lr = scheduler.get_last_lr()
+    avg_loss_across_batches = 0
     print(f'Epoka {epoch+1}, aktualny LR: {current_lr[0]}')
     print(f'Epoch: {epoch + 1}, Current Learning Rate: {current_lr}')
     running_loss = 0.0
@@ -287,18 +290,17 @@ def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
         optimizer.step()
 
         if batch_index % 100 == 99:  # print every 100 batches
-            avg_loss_across_batches = running_loss / 100
+            avg_loss_across_batches = running_loss / batch_index
             print('Batch {0}, Loss: {1:.5f}'.format(batch_index + 1,
                                                     avg_loss_across_batches))
-            running_loss = 0.0
-
     scheduler.step()
-    print()
+    return avg_loss_across_batches
 
 
 def validate_one_epoch(model, test_loader):
     model.train(False)
     running_loss = 0.0
+    avg_loss_across_batches = 0
 
     for batch_index, batch in enumerate(test_loader):
         x_batch, y_batch = batch[0].to(device), batch[1].to(device)
@@ -309,22 +311,30 @@ def validate_one_epoch(model, test_loader):
 
     avg_loss_across_batches = running_loss / len(test_loader)
 
-    print('Val Loss: {0:.3f}'.format(avg_loss_across_batches))
+    print('Val Loss: {0:.5f}'.format(avg_loss_across_batches))
     print('***************************************************')
     print()
+    return avg_loss_across_batches
 
 
-def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_num):
+def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_num, log_dir):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.9)
+    scheduler = StepLR(optimizer, step_size=1, gamma=0.95)
+    train_loss = []
+    val_loss = []
+    i = 0
     for epoch in range(num_epochs):
-        train_one_epoch(model, optimizer, scheduler, train_loader, epoch)
-        validate_one_epoch(model, test_loader)
+        train_loss.append(train_one_epoch(model, optimizer, scheduler, train_loader, epoch))
+        loss = validate_one_epoch(model, test_loader)
+        val_loss.append(loss)
+        if len(val_loss) >= 2:
+            if loss > val_loss[-2]:
+                i = i + 1
+        if i >= 4:
+            break
 
-    #X_test = X_test[:82, :, :]
-    #y_test = y_test[:82, :]
     pred = model(X_test.to(device))
     for t in range(0, lookforward, 1):
         pred = model(X_test.to(device))
@@ -332,7 +342,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
             X_test[:, k, :] = X_test[:, k+1, :]
         X_test[:, -1, :] = pred
     loss = loss_function(pred.cpu(), y_test)
-    print(f"Test loss: {loss}")
+    print(f"Test loss: {loss:.5f}")
     test_predictions = pred.detach().cpu().numpy().flatten()
 
     dummies = np.zeros((X_test.shape[0], lookback * param_num + 1))
@@ -348,20 +358,17 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
     test_predictions = test_predictions[:-lookforward]
     new_y_test = new_y_test[lookforward:]
 
-    plt.plot(new_y_test, label='Actual Close')
-    plt.plot(test_predictions, label='Predicted Close')
-    plt.xlabel('Day')
-    plt.ylabel('Close')
-    plt.legend()
-    plt.show()
-    plt.grid(True)
+    test_predictions = test_predictions[:200]
+    new_y_test = new_y_test[:200]
+    save_fig(train_loss[1:], val_loss[1:], new_y_test, test_predictions, loss, log_dir)
+    return loss
 
 
 def run():
-    data = load_dataset_most_correlation('../data/', 0.05)
+    data = load_dataset_most_correlation('../data/', percent_params)
     data['Time'] = pd.to_datetime(data['Time'])
-    #data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
     parameters_num = data.shape[1] - 1
+    dir = f"LSTM_test/lstm_back{lookback}_forward{lookforward}_param{parameters_num}"
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
     shifted = shifted_df.copy()
@@ -370,7 +377,7 @@ def run():
     scaler = MinMaxScaler(feature_range=(-1, 1))
     shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
 
-    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.95, parameters_num)
+    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.8, parameters_num)
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
@@ -383,8 +390,52 @@ def run():
     model = LSTM(input_size=1, hidden_size=1, num_stacked_layers=1, dev=device)
     model.to(device)
 
-    run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num)
+    return run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num, log_dir=dir)
 
 
 if __name__ == "__main__":
-    run()
+    # Config
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    lookback = 24
+    lookforward = 1
+    batch_size = 32
+    learning_rate = 0.001
+    num_epochs = 50
+    percent_params = 0.20
+    loss_function = nn.MSELoss()
+
+    '''loss_list = []
+    loss_list.append(999999999)
+    value = 0
+    for i in np.arange(0.05, 0.4, 0.1):
+        print(f"Percentage of parameters: {i}")
+        percent_params = i
+        loss = run()
+        if loss < min(loss_list):
+            value = i
+        loss_list.append(loss)
+    percent_params = value
+    print(f"Best percentage of parameters: {percent_params}")'''
+
+    loss_list = []
+    loss_list.append(999999999)
+    value = 0
+    for i in [5, 10, 15, 20, 30, 40, 60, 100, 200]:
+        print(f"Lookback: {i}")
+        lookback = i
+        loss = run()
+        if loss < min(loss_list):
+            value = i
+        loss_list.append(loss)
+    lookback = value
+    print(f"Best lookback: {percent_params}")
+
+    loss_list = []
+    loss_list.append(999999999)
+    value = 0
+    for i in [1, 5, 10, 20]:
+        print(f"Foorward: {i}")
+        percent_params = i
+        loss = run()
+
+
