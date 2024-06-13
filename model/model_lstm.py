@@ -225,19 +225,19 @@ class LSTMCell(nn.Module):
         hx, cx = hidden
 
         # Forget gate (percent long term to remember)
-        fg = torch.sigmoid((input * self.weight_fg_ih) + (hx * self.weight_fg_hh) + self.bias_fg)
+        fg = torch.sigmoid(torch.matmul(input, self.weight_fg_ih) + torch.matmul(hx,self.weight_fg_hh) + self.bias_fg)
 
         # Input gate perc (percent potential memory to remember)
-        ig_perc = torch.sigmoid((input * self.weight_ig_ih) + (hx * self.weight_ig_hh) + self.bias_ig)
+        ig_perc = torch.sigmoid(torch.matmul(input, self.weight_ig_ih) + torch.matmul(hx, self.weight_ig_hh) + self.bias_ig)
 
         # Input gate val (potential long-term memory)
-        ig = torch.tanh((input * self.weight_ig_ih) + (hx * self.weight_ig_hh) + self.bias_ig)
+        ig = torch.tanh(torch.matmul(input, self.weight_ig_ih) + torch.matmul(hx, self.weight_ig_hh) + self.bias_ig)
 
         # New cell state
         updated_long_memory = ((cx * fg) + (ig * ig_perc))
 
         # Output gate
-        og = torch.sigmoid((input * self.weight_og_ih) + (hx * self.weight_og_hh) + self.bias_og)
+        og = torch.sigmoid(torch.matmul(input, self.weight_og_ih) + torch.matmul(hx, self.weight_og_hh) + self.bias_og)
 
         # New hidden state
         updated_short_memory = og * torch.tanh(updated_long_memory)
@@ -258,12 +258,13 @@ class LSTM(nn.Module):
 
     def forward(self, x):
         batch_size = x.size(0)
-        h = [torch.zeros(batch_size, x.size(2)).to(self.device) for _ in range(self.num_layers)]
-        c = [torch.zeros(batch_size, x.size(2)).to(self.device) for _ in range(self.num_layers)]
+        h = [torch.zeros(batch_size, x.size(2) * self.hidden_size).to(self.device) for _ in range(self.num_layers)]
+        c = [torch.zeros(batch_size, x.size(2) * self.hidden_size).to(self.device) for _ in range(self.num_layers)]
 
         for i in range(x.size(1)):
-            for layer in range(self.num_layers):
-                output, (h[layer], c[layer]) = self.layers[layer](x[:, i, :], (h[layer], c[layer]))
+            output, (h[0], c[0]) = self.layers[0](x[:, i, :], (h[0], c[0]))
+            for layer in range(1, self.num_layers):
+                output, (h[layer], c[layer]) = self.layers[layer](output, (h[layer], c[layer]))
 
         last_hidden = h[-1]
         out = self.fc(last_hidden.to(self.device))
@@ -368,7 +369,7 @@ def run():
     data = load_dataset_most_correlation('../data/', percent_params)
     data['Time'] = pd.to_datetime(data['Time'])
     parameters_num = data.shape[1] - 1
-    dir = f"LSTM_test/lstm_back{lookback}_forward{lookforward}_param{parameters_num}"
+    dir = f"LSTM_test2/lstm_back{lookback}_forward{lookforward}_param{parameters_num}"
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
     shifted = shifted_df.copy()
@@ -387,7 +388,7 @@ def run():
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
-    model = LSTM(input_size=1, hidden_size=1, num_stacked_layers=1, dev=device)
+    model = LSTM(input_size=1, hidden_size=3, num_stacked_layers=3, dev=device)
     model.to(device)
 
     return run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num, log_dir=dir)
@@ -401,7 +402,7 @@ if __name__ == "__main__":
     batch_size = 32
     learning_rate = 0.001
     num_epochs = 50
-    percent_params = 0.20
+    percent_params = 0.05
     loss_function = nn.MSELoss()
 
     '''loss_list = []
@@ -415,7 +416,7 @@ if __name__ == "__main__":
             value = i
         loss_list.append(loss)
     percent_params = value
-    print(f"Best percentage of parameters: {percent_params}")'''
+    print(f"Best percentage of parameters: {percent_params}")
 
     loss_list = []
     loss_list.append(999999999)
@@ -436,6 +437,6 @@ if __name__ == "__main__":
     for i in [1, 5, 10, 20]:
         print(f"Foorward: {i}")
         percent_params = i
-        loss = run()
-
+        loss = run()'''
+run()
 
