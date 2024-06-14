@@ -16,16 +16,6 @@ from torch.utils.data import DataLoader
 from data.prepare_dataset import load_dataset, load_dataset_most_correlation
 from utils import save_fig_loss, save_fig
 
-# Config
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 6
-lookforward = 10
-batch_size = 32
-learning_rate = 0.001
-num_epochs = 3
-percent_params = 0.1
-loss_function = nn.MSELoss()
-
 
 def prepare_dataframe_for_lstm(df, n_steps):
     """
@@ -290,7 +280,7 @@ def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
         loss.backward()
         optimizer.step()
 
-        if batch_index % 100 == 99:  # print every 100 batches
+        if batch_index % 10 == 9:  # print every 100 batches
             avg_loss_across_batches = running_loss / batch_index
             print('Batch {0}, Loss: {1:.5f}'.format(batch_index + 1,
                                                     avg_loss_across_batches))
@@ -322,7 +312,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.95)
+    scheduler = StepLR(optimizer, step_size=1, gamma=0.90)
     train_loss = []
     val_loss = []
     i = 0
@@ -333,7 +323,7 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
         if len(val_loss) >= 2:
             if loss > val_loss[-2]:
                 i = i + 1
-        if i >= 4:
+        if i >= 3:
             break
 
     pred = model(X_test.to(device))
@@ -369,7 +359,7 @@ def run():
     data = load_dataset_most_correlation('../data/', percent_params)
     data['Time'] = pd.to_datetime(data['Time'])
     parameters_num = data.shape[1] - 1
-    dir = f"LSTM_test2/lstm_back{lookback}_forward{lookforward}_param{parameters_num}"
+    dir = f"LSTM_test3/lstm_back{lookback}_forward{lookforward}_param{parameters_num}"
 
     shifted_df = prepare_dataframe_for_lstm(data, lookback)
     shifted = shifted_df.copy()
@@ -378,7 +368,7 @@ def run():
     scaler = MinMaxScaler(feature_range=(-1, 1))
     shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
 
-    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.8, parameters_num)
+    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.9, parameters_num)
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
@@ -388,7 +378,7 @@ def run():
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
-    model = LSTM(input_size=1, hidden_size=3, num_stacked_layers=3, dev=device)
+    model = LSTM(input_size=1, hidden_size=8, num_stacked_layers=5, dev=device)
     model.to(device)
 
     return run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num, log_dir=dir)
@@ -396,19 +386,19 @@ def run():
 
 if __name__ == "__main__":
     # Config
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     lookback = 24
     lookforward = 1
-    batch_size = 32
-    learning_rate = 0.001
+    batch_size = 1024
+    learning_rate = 0.005
     num_epochs = 50
-    percent_params = 0.05
+    percent_params = 0.15
     loss_function = nn.MSELoss()
 
     '''loss_list = []
     loss_list.append(999999999)
     value = 0
-    for i in np.arange(0.05, 0.4, 0.1):
+    for i in [0.15, 0.3]:
         print(f"Percentage of parameters: {i}")
         percent_params = i
         loss = run()
@@ -416,12 +406,12 @@ if __name__ == "__main__":
             value = i
         loss_list.append(loss)
     percent_params = value
-    print(f"Best percentage of parameters: {percent_params}")
+    print(f"Best percentage of parameters: {percent_params}")'''
 
-    loss_list = []
+    '''loss_list = []
     loss_list.append(999999999)
     value = 0
-    for i in [5, 10, 15, 20, 30, 40, 60, 100, 200]:
+    for i in [10]:
         print(f"Lookback: {i}")
         lookback = i
         loss = run()
@@ -429,14 +419,12 @@ if __name__ == "__main__":
             value = i
         loss_list.append(loss)
     lookback = value
-    print(f"Best lookback: {percent_params}")
+    print(f"Best lookback: {percent_params}")'''
 
     loss_list = []
-    loss_list.append(999999999)
     value = 0
-    for i in [1, 5, 10, 20]:
+    for i in [6, 12, 24]:
+        lookforward = i
         print(f"Foorward: {i}")
-        percent_params = i
-        loss = run()'''
-run()
+        loss = run()
 
