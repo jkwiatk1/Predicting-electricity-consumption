@@ -11,20 +11,11 @@ import sys
 sys.path.append('../')
 import torch
 import torch.nn as nn
-
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset
 from copy import deepcopy as dc
 from data.prepare_dataset import load_dataset, load_dataset_most_correlation
-
-# Config
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-lookback = 24
-lookforward = 5
-batch_size = 32
-learning_rate = 0.001
-num_epochs = 10
-loss_function = nn.MSELoss()
+from utils import save_fig_loss, save_fig
 
 
 class PositionalEncoding(nn.Module):
@@ -286,6 +277,7 @@ def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
     current_lr = scheduler.get_last_lr()
     print(f'Epoch {epoch + 1}, Current Learning Rate: {current_lr}')
     running_loss = 0.0
+    avg_loss_across_batches = 0
     for batch_index, batch in enumerate(train_loader):
         x_batch, y_batch = batch[0].to(device), batch[1].to(device)
         optimizer.zero_grad()
@@ -294,13 +286,12 @@ def train_one_epoch(model, optimizer, scheduler, train_loader, epoch):
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-        if batch_index % 100 == 99:  # print every 100 batches
-            avg_loss_across_batches = running_loss / 100
+        if batch_index % 10 == 9:  # print every 100 batches
+            avg_loss_across_batches = running_loss / (batch_index+1)
             print('Batch {0}, Loss: {1:.5f}'.format(batch_index + 1, avg_loss_across_batches))
-            running_loss = 0.0
 
     scheduler.step()
-    print()
+    return avg_loss_across_batches
 
 
 def validate_one_epoch(model, test_loader):
@@ -313,39 +304,60 @@ def validate_one_epoch(model, test_loader):
             loss = loss_function(output.view(-1), y_batch.view(-1))
             running_loss += loss.item()
     avg_loss_across_batches = running_loss / len(test_loader)
-    print('Validation Loss: {0:.3f}'.format(avg_loss_across_batches))
+    print('Validation Loss: {0:.5f}'.format(avg_loss_across_batches))
     print('***************************************************')
-    print()
-    #if avg_loss_across_batches < 0.005:
-    #    return True
-    return False
+    return avg_loss_across_batches
 
 
-def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_num):
+def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_num, log_dir):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.85)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
+    train_loss = []
+    val_loss = []
+    i = 0
     for epoch in range(num_epochs):
-        train_one_epoch(model, optimizer, scheduler, train_loader, epoch)
-        if validate_one_epoch(model, test_loader) is True:
+        train_loss.append(train_one_epoch(model, optimizer, scheduler, train_loader, epoch))
+        loss = validate_one_epoch(model, test_loader)
+        val_loss.append(loss)
+        if len(val_loss) >= 3:
+            if loss > val_loss[-2]:
+                i = i + 1
+        if i >= 3:
             break
 
     test_predictions = []
-    #X_test = X_test[:72, :]
-    #y_test = y_test[:72, :]
     with torch.no_grad():
         model.eval()
-        pred = model(X_test.to(device))
+
+        batch_s = len(X_test) // 10  # Dzielimy X_test na 10 fragmentów
+        predictions = []
+        for i in range(10):
+            start_idx = i * batch_s
+            end_idx = (i + 1) * batch_s if i < 9 else len(X_test)
+            X_batch = X_test[start_idx:end_idx].to(device)
+            with torch.no_grad():
+                pred_batch = model(X_batch)
+            predictions.append(pred_batch)
+        pred = torch.cat(predictions, dim=0)
+
         for t in range(0, lookforward, 1):
-            pred = model(X_test.to(device))
+            predictions = []
+            for i in range(10):
+                start_idx = i * batch_s
+                end_idx = (i + 1) * batch_s if i < 9 else len(X_test)
+                X_batch = X_test[start_idx:end_idx].to(device)
+                with torch.no_grad():
+                    pred_batch = model(X_batch)
+                predictions.append(pred_batch)
+            pred = torch.cat(predictions, dim=0)
             for k in range(0, lookback - 1, 1):
                 X_test[:, k, :] = X_test[:, k + 1, :]
             X_test[:, -1, :] = pred
         loss = loss_function(pred.cpu(), y_test)
-        print(f"Test loss: {loss}")
+        print(f"Test loss: {loss:.5f}")
         test_predictions = pred.detach().cpu().numpy().flatten()
-
         torch.cuda.empty_cache()
 
     test_predictions = np.array(test_predictions)
@@ -363,28 +375,27 @@ def run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, param_
     test_predictions = test_predictions[:-lookforward]
     new_y_test = new_y_test[lookforward:]
 
-    plt.plot(new_y_test, label='Actual Close')
-    plt.plot(test_predictions, label='Predicted Close')
-    plt.xlabel('Day')
-    plt.ylabel('Close')
-    plt.legend()
-    plt.show()
+    test_predictions = test_predictions[:200]
+    new_y_test = new_y_test[:200]
+    save_fig(train_loss[1:], val_loss[1:], new_y_test, test_predictions, loss, log_dir)
+    return loss
 
 # Load data and run the model
 def run():
     torch.cuda.empty_cache()
-    data = load_dataset_most_correlation('../data/', 0.05)
+    data = load_dataset_most_correlation('../data/', percent_params)
     data['Time'] = pd.to_datetime(data['Time'])
-    #data.drop(['Soil Temperature_7-28 cm down[°C]', 'Soil Moisture_7-28 cm down[m³/m³]', 'Snow Depth_sfc[m]', 'Shortwave Radiation_sfc[W/m²]'], axis=1, inplace=True)
     parameters_num = data.shape[1] - 1
+    dir = f"trans_test1/trans_back{lookback}_forward{lookforward}_param{parameters_num}"
 
     shifted_df = prepare_dataframe_for_transformer(data, lookback)
-    shifted_df_as_np = shifted_df.to_numpy()
+    shifted = shifted_df.copy()
+    shifted_df_as_np = shifted.to_numpy()
 
     scaler = MinMaxScaler(feature_range=(-1, 1))
     shifted_df_as_np = scaler.fit_transform(shifted_df_as_np)
 
-    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.95, parameters_num)
+    X_train, y_train, X_test, y_test = split_prepare_date(shifted_df_as_np, 0.8, parameters_num)
     train_data = list(zip(X_train, y_train))
     np.random.shuffle(train_data)
     X_train, y_train = zip(*train_data)
@@ -393,11 +404,53 @@ def run():
     train_dataset = TimeSeriesDataset(X_train, y_train)
     test_dataset = TimeSeriesDataset(X_test, y_test)
 
-    model = TransformerModel(input_dim=1, d_model=512, nhead=4, num_encoder_layers=4, dim_feedforward=1024, dropout=0.1)
+    model = TransformerModel(input_dim=1, d_model=1024, nhead=6, num_encoder_layers=6, dim_feedforward=1024, dropout=0.05)
     model.to(device)
 
-    run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num)
+    return run_model(train_dataset, test_dataset, model, X_test, y_test, scaler, parameters_num, log_dir=dir)
 
 
 if __name__ == "__main__":
-    run()
+    # Config
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    lookback = 24
+    lookforward = 1
+    batch_size = 128
+    learning_rate = 0.0001
+    num_epochs = 50
+    percent_params = 0.20
+    loss_function = nn.MSELoss()
+
+    '''loss_list = []
+    loss_list.append(999999999)
+    value = 0
+    for i in [0.1, 0.15]:
+        print(f"Percentage of parameters: {i}")
+        percent_params = i
+        loss = run()
+        if loss < min(loss_list):
+            value = i
+        loss_list.append(loss)
+    percent_params = value
+    print(f"Best percentage of parameters: {percent_params}")
+
+    loss_list = []
+    loss_list.append(999999999)
+    value = 0
+    for i in [5, 10, 20, 30]:
+        print(f"Lookback: {i}")
+        lookback = i
+        loss = run()
+        if loss < min(loss_list):
+            value = i
+        loss_list.append(loss)
+    lookback = value
+    print(f"Best lookback: {percent_params}")'''
+
+    loss_list = []
+    value = 0
+    for i in [1, 6, 12, 24]:
+        lookforward = i
+        print(f"Foorward: {i}")
+        loss = run()
+
